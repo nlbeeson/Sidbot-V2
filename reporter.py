@@ -6,13 +6,15 @@ from dotenv import load_dotenv
 from db_utils import get_clients  # Aligned with modular structure
 import config
 
-# Setup logging
+# Setup logging with UTF-8 encoding for Windows emoji compatibility
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[logging.FileHandler("sidbot.log"), logging.StreamHandler()]
+    handlers=[
+        logging.FileHandler("sidbot.log", encoding='utf-8'),
+        logging.StreamHandler()
+    ]
 )
-logger = logging.getLogger(__name__)
 
 # Load environment variables (API keys are pulled from config.py)
 load_dotenv()
@@ -114,15 +116,16 @@ def generate_html_report():
 def send_report():
     try:
         html_body = generate_html_report()
-        resend.Emails.send({{
+        # Fix: Use single curly braces for the dictionary
+        resend.Emails.send({
             "from": f"SidBot Advisor <{config.EMAIL_SENDER}>",
             "to": [config.EMAIL_RECEIVER],
             "subject": f"SidBot Daily Intelligence - {datetime.now().strftime('%b %d')}",
             "html": html_body
-        }})
+        })
         logger.info("✅ Daily intelligence report sent successfully.")
     except Exception as e:
-        logger.error(f"❌ Failed to send report: {e}")
+        logger.error(f"Failed to send report: {e}") # Removed emoji for console safety
 
 
 if __name__ == "__main__":
