@@ -8,6 +8,7 @@ from datetime import datetime
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockSnapshotRequest
 import config
+import logging
 
 
 def get_clients():
@@ -61,37 +62,33 @@ def sync_latest_market_data():
             logger.error(f"Error syncing batch starting with {batch[0]}: {e}")
 
 
-def cleanup_stale_signals():
+def cleanup_expired_signals():
     """
-    Removes symbols from sid_method_signal_watchlist if more than
-    28 bars have passed since the initial RSI extreme touch.
+    Removes symbols from the watchlist where the time elapsed since
+    rsi_touch_date exceeds the RSI_SIGNAL_PERIOD (28 days).
     """
     clients = get_clients()
     supabase = clients['supabase_client']
 
-    # 1. Fetch all staged signals
+    # 1. Fetch all symbols and their touch dates
     staged = supabase.table("sid_method_signal_watchlist").select("symbol, rsi_touch_date").execute()
+
+    if not staged.data:
+        return
+
+    expiry_threshold = datetime.now() - timedelta(days=config.RSI_SIGNAL_PERIOD)
+    removed_count = 0
 
     for record in staged.data:
         symbol = record['symbol']
-        touch_date = record['rsi_touch_date']
+        # Parse ISO format date from DB
+        touch_date = datetime.fromisoformat(record['rsi_touch_date'])
 
-        try:
-            # 2. Count daily bars in market_data since the rsi_touch_date
-            count_resp = supabase.table("market_data") \
-                .select("timestamp", count='exact') \
-                .eq("symbol", symbol) \
-                .eq("timeframe", "1d") \
-                .gte("timestamp", touch_date) \
-                .execute()
+        # 2. Check if the signal has expired
+        if touch_date < expiry_threshold:
+            supabase.table("sid_method_signal_watchlist").delete().eq("symbol", symbol).execute()
+            logger.info(f"🧹 Removed expired signal: {symbol} (Touched on {touch_date.date()})")
+            removed_count += 1
 
-            bars_passed = count_resp.count if count_resp.count else 0
-
-            # 3. Remove if past 28 bars
-            if bars_passed > 28:
-                supabase.table("sid_method_signal_watchlist").delete().eq("symbol", symbol).execute()
-                logger.info(f"🧹 Removed stale signal {symbol}: {bars_passed} bars passed since RSI touch.")
-
-        except Exception as e:
-            logger.error(f"Error checking expiry for {symbol}: {e}")
-
+    if removed_count > 0:
+        logger.info(f"Daily cleanup complete. Total symbols removed: {removed_count}")

@@ -55,16 +55,13 @@ def run_prep_sequence():
     # 1. Sync latest snapshots from Alpaca to Supabase
     db_utils.sync_latest_market_data()
 
-    # 2. Cleanup stale signals (older than 28 bars)
-    db_utils.cleanup_stale_signals()
-
-    # 3. Discovery: Find current RSI extremes (<=30 or >=70)
+    # 2. Discovery: Find current RSI extremes (<=30 or >=70)
     get_signals.populate_sid_extremes()
 
-    # 4. Validation: Check momentum gates (Daily/Weekly RSI & MACD Slopes)
+    # 3. Validation: Check momentum gates (Daily/Weekly RSI & MACD Slopes)
     scanner.validate_staged_signals()
 
-    # 5. Scoring: Apply weights (Preferred list, SPY alignment, etc.)
+    # 4. Scoring: Apply weights (Preferred list, SPY alignment, etc.)
     clients = db_utils.get_clients()
     scanner.score_and_validate_staged(clients['supabase_client'])
 
@@ -83,6 +80,11 @@ def run_execution_sequence():
     enter.execute_sid_entries()
     logger.info("--- EXECUTION SEQUENCE COMPLETE ---")
 
+def run_daily_maintenance():
+    """Performs end-of-day database cleanup."""
+    logger.info("--- STARTING DAILY MAINTENANCE ---")
+    db_utils.cleanup_expired_signals()
+    logger.info("--- MAINTENANCE COMPLETE ---")
 
 # --- SCHEDULING ---
 
@@ -91,6 +93,9 @@ schedule.every().monday.to_friday().at("15:30").do(run_prep_sequence)
 
 # 15:45: Final Entry Execution
 schedule.every().monday.to_friday().at("15:45").do(run_execution_sequence)
+
+# Add a 16:30 schedule for the cleanup script
+schedule.every().monday.to_friday().at("16:30").do(run_daily_maintenance)
 
 
 def main():
