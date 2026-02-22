@@ -271,7 +271,7 @@ def run_validation_scanner(supabase):
             rsi_weekly = calculate_weekly_rsi(df)  # Resampled logic
             macd_data = calculate_daily_macd(df)
 
-            # 4. CHECK THE TURN (GATES)
+            # 4. CHECK THE ALIGNMENTS
             # Logic: Check if the current value is higher/lower than the previous value (Slope)
 
             # Daily RSI Slope
@@ -319,7 +319,7 @@ def run_validation_scanner(supabase):
 def validate_staged_signals(supabase):
     """
     Final validation step in scanner.py.
-    Checks GATES, calculates scores, and performs the 14-day earnings filter.
+    Checks RSI/MACD alignments, calculates scores, and performs the 14-day earnings filter.
     """
     # 1. Fetch staged signals that aren't ready yet
     staged_signals = supabase.table("sid_method_signal_watchlist").select("*").eq("is_ready", False).execute()
@@ -348,7 +348,7 @@ def validate_staged_signals(supabase):
                     logger.info(f"🚫 {symbol} invalid for entry: Earnings in {days_to_earnings} days.")
                     continue
 
-                    # 3. MOMENTUM GATES (RSI & MACD Alignment)
+                    # 3. MOMENTUM ALIGNMENTS (RSI & MACD Alignment)
             # Fetch data and run your previous calculation functions
             data = supabase.table("market_data").select("*").eq("symbol", symbol).order("timestamp", desc=True).limit(
                 100).execute()
@@ -369,10 +369,12 @@ def validate_staged_signals(supabase):
                 supabase.table("sid_method_signal_watchlist").update({
                     "is_ready": True,
                     "next_earnings": str(next_earnings) if earnings_resp.data else None,
-                    "last_updated": datetime.now().isoformat()
+                    "last_updated": datetime.now().isoformat(),
+                    "stop_loss_strategy": config.STOP_LOSS_STRATEGY,
+                    "exit_strategy": config.EXIT_STRATEGY
                 }).eq("symbol", symbol).execute()
 
-                logger.info(f"✅ {symbol} passed all gates and earnings filter. Ready for entry.")
+                logger.info(f"✅ {symbol} RSI/MACD aligned. Ready for entry with {config.STOP_LOSS_STRATEGY}.")
 
         except Exception as e:
             logger.error(f"❌ Error in final validation for {symbol}: {e}")
