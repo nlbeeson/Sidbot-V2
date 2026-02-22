@@ -1,17 +1,16 @@
-import supabase
-import alpaca
-import config
-
-import os
-import pandas as pd
-from datetime import datetime
+import logging
+from supabase import create_client  # Add this specific import
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockSnapshotRequest
 import config
-import logging
 
+# Setup logging for db_utils
+logger = logging.getLogger(__name__)
 
 def get_clients():
+    """
+    Initializes and returns the Supabase and Alpaca clients.
+    """
     return {
         "supabase_client": create_client(config.SUPABASE_URL, config.SUPABASE_KEY),
         "alpaca_client": StockHistoricalDataClient(config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)

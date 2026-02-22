@@ -23,6 +23,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Define the days of the week for the bot to operate
+weekdays = [schedule.every().monday,
+            schedule.every().tuesday,
+            schedule.every().wednesday,
+            schedule.every().thursday,
+            schedule.every().friday]
 
 def is_market_open():
     """Checks if current time is within regular NYSE hours (9:30 AM - 4:00 PM EST)."""
@@ -95,13 +101,16 @@ def run_daily_maintenance():
 # --- SCHEDULING ---
 
 # 15:30: Data Sync and Signal Scoring
-schedule.every().monday.to_friday().at("15:30").do(run_prep_sequence)
+for day in weekdays:
+    day.at("15:30").do(run_prep_sequence)
 
 # 15:45: Final Entry Execution
-schedule.every().monday.to_friday().at("15:45").do(run_execution_sequence)
+for day in weekdays:
+    day.at("15:45").do(run_execution_sequence)
 
 # Add a 16:30 schedule for the cleanup script
-schedule.every().monday.to_friday().at("16:30").do(run_daily_maintenance)
+for day in weekdays:
+    day.at("16:30").do(run_daily_maintenance)
 
 
 def main():
