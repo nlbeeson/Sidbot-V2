@@ -1,8 +1,44 @@
 import math
 import logging
+from ta.volatility import AverageTrueRange
+import config
 
 logger = logging.getLogger(__name__)
 
+
+def calculate_atr_stop(df, direction):
+    """Initial ATR stop calculation used at entry."""
+    atr_indicator = AverageTrueRange(
+        high=df['high'], low=df['low'], close=df['close'], window=config.ATR_PERIOD
+    )
+    atr = atr_indicator.average_true_range().iloc[-1]
+    curr_price = df['close'].iloc[-1]
+
+    if direction == 'LONG':
+        return curr_price - (atr * config.ATR_MULTIPLIER)
+    else:
+        return curr_price + (atr * config.ATR_MULTIPLIER)
+
+
+def calculate_ratchet_stop(current_stop, df, direction):
+    """
+    Determines if the stop loss should be moved closer to price.
+    Returns the NEW stop price if it moved, otherwise returns the OLD stop price.
+    """
+    atr_indicator = AverageTrueRange(
+        high=df['high'], low=df['low'], close=df['close'], window=config.ATR_PERIOD
+    )
+    atr = atr_indicator.average_true_range().iloc[-1]
+    curr_price = df['close'].iloc[-1]
+
+    if direction == 'LONG':
+        new_calculated_stop = curr_price - (atr * config.ATR_MULTIPLIER)
+        # Only move stop UP (Ratchet)
+        return max(current_stop, new_calculated_stop)
+    else:
+        new_calculated_stop = curr_price + (atr * config.ATR_MULTIPLIER)
+        # Only move stop DOWN (Ratchet)
+        return min(current_stop, new_calculated_stop)
 
 def calculate_sid_stop_loss(extreme_price, direction):
     """

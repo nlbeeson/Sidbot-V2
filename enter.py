@@ -4,7 +4,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, StopLossRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from db_utils import get_clients
-from risk import calculate_sid_stop_loss, calculate_position_size
+from risk import calculate_sid_stop_loss, calculate_position_size, calculate_atr_stop
 import config
 
 # Setup logging
@@ -73,6 +73,24 @@ def execute_sid_entries():
             continue
 
         # 5. Risk Calculation
+        # 1. Determine Strategy (Defaults to config, but could be dynamic)
+        sl_strat = config.STOP_LOSS_STRATEGY
+        exit_strat = config.EXIT_STRATEGY
+
+        # 2. Risk Calculation based on Strategy
+        if sl_strat == "ATR_TRAIL":
+            # Ensure you have enough data for ATR (usually 14+ periods)
+            stop_loss = calculate_atr_stop(df, direction)
+        else:
+            stop_loss = calculate_sid_stop_loss(signal['extreme_price'], direction)
+
+        # 3. Update DB with chosen strategies before entry
+        supabase.table("sid_method_signal_watchlist").update({
+            "stop_loss_strategy": sl_strat,
+            "exit_strategy": exit_strat,
+            "stop_loss": stop_loss
+        }).eq("symbol", symbol).execute()
+
         stop_loss = calculate_sid_stop_loss(signal['extreme_price'], direction)
         entry_price = float(signal['entry_price'])
         qty = calculate_position_size(equity, config.RISK_PER_TRADE, entry_price, stop_loss)

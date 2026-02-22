@@ -18,6 +18,14 @@ PAPER_TRADING = True         # Toggle for Alpaca Paper vs Live environment
 ALLOW_SHORT = True           # Toggle to enable/disable short selling in the strategy
 
 # --- SID METHOD PARAMETERS ---
+# --- STRATEGY SELECTION ---
+STOP_LOSS_STRATEGY = "ATR_TRAIL"  # Options: "FIXED_WHOLE" or "ATR_TRAIL"
+EXIT_STRATEGY = "FIXED" # Options: "FIXED" (RSI 50 crossover) or "MOMENTUM" (Remains in trade past RSI 50 until RSI momentum reverses)
+
+# --- ATR SPECIFIC ---
+ATR_PERIOD = 14
+ATR_MULTIPLIER = 3.0
+
 # Discovery Levels (get_signals.py)
 RSI_EXTREME_OVERSOLD = 30
 RSI_EXTREME_OVERBOUGHT = 70
