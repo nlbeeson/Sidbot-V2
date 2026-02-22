@@ -1,6 +1,7 @@
 import os
 import logging
 import pandas as pd
+from datetime import datetime
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, ReplaceOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
@@ -9,11 +10,14 @@ from db_utils import get_clients
 import risk  # Math engine for ATR Trailing logic
 import config
 
-# Setup logging
+# Setup logging with UTF-8 encoding for Windows compatibility
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[logging.FileHandler("sidbot.log"), logging.StreamHandler()]
+    handlers=[
+        logging.FileHandler("sidbot.log", encoding='utf-8'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -59,14 +63,17 @@ def monitor_and_execute_exits():
 
         try:
             # 1. Fetch assigned strategies and current stop from DB
-            signal_data = supabase.table("sid_method_signal_watchlist") \
+            response = supabase.table("sid_method_signal_watchlist") \
                 .select("exit_strategy, stop_loss_strategy, stop_loss") \
                 .eq("symbol", symbol).maybe_single().execute()
 
+            # Fix: Extract data from the response object
+            signal_data = response.data
+
             # Default to FIXED if no record is found in the watchlist
-            exit_strat = signal_data.data['exit_strategy'] if signal_data.data else "FIXED"
-            sl_strat = signal_data.data['stop_loss_strategy'] if signal_data.data else "FIXED_WHOLE"
-            stored_stop = float(signal_data.data['stop_loss']) if signal_data.data and signal_data.data['stop_loss'] else None
+            exit_strat = signal_data['exit_strategy'] if signal_data else "FIXED"
+            sl_strat = signal_data['stop_loss_strategy'] if signal_data else "FIXED_WHOLE"
+            stored_stop = float(signal_data['stop_loss']) if signal_data and signal_data.get('stop_loss') else None
 
             # 2. Fetch Market Data (Need enough for RSI and ATR)
             data_resp = supabase.table("market_data") \
@@ -112,7 +119,7 @@ def monitor_and_execute_exits():
                 logger.info(f"🛑 EXIT ({exit_strat}): Closed {symbol} at RSI {curr_rsi:.2f}")
                 continue  # Move to the next position
 
-            # --- ATR RATCHET LOGIC (Trailing Stop) ---
+            # --- RATCHET LOGIC (ATR Trailing Stop) ---
             if sl_strat == "ATR_TRAIL" and stored_stop:
                 # Use the math engine in risk.py to see if the stop should move
                 new_stop = risk.calculate_ratchet_stop(stored_stop, df, side)
