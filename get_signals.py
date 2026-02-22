@@ -67,6 +67,8 @@ def populate_sid_extremes():
                     "extreme_price": float(extreme_val),
                     "entry_price": float(curr_price),
                     "is_ready": False,  # Gates/Turn checks are Step 2
+                    "stop_loss_strategy": config.STOP_LOSS_STRATEGY,
+                    "exit_strategy": config.EXIT_STRATEGY,
                     "logic_trail": {
                         "event": "Initial RSI Extreme Hit",
                         "rsi_at_touch": round(float(curr_rsi), 2),

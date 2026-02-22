@@ -7,38 +7,30 @@ logger = logging.getLogger(__name__)
 
 
 def calculate_atr_stop(df, direction):
-    """Initial ATR stop calculation used at entry."""
-    atr_indicator = AverageTrueRange(
-        high=df['high'], low=df['low'], close=df['close'], window=config.ATR_PERIOD
-    )
+    """Calculates initial ATR-based stop loss."""
+    atr_indicator = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=config.ATR_PERIOD)
     atr = atr_indicator.average_true_range().iloc[-1]
     curr_price = df['close'].iloc[-1]
 
-    if direction == 'LONG':
-        return curr_price - (atr * config.ATR_MULTIPLIER)
-    else:
-        return curr_price + (atr * config.ATR_MULTIPLIER)
+    return curr_price - (atr * config.ATR_MULTIPLIER) if direction == 'LONG' else curr_price + (
+                atr * config.ATR_MULTIPLIER)
 
 
 def calculate_ratchet_stop(current_stop, df, direction):
     """
-    Determines if the stop loss should be moved closer to price.
-    Returns the NEW stop price if it moved, otherwise returns the OLD stop price.
+    Moves the stop only in the direction of the trade (Ratchet).
+    Returns the new stop if it moved, otherwise returns the old stop.
     """
-    atr_indicator = AverageTrueRange(
-        high=df['high'], low=df['low'], close=df['close'], window=config.ATR_PERIOD
-    )
+    atr_indicator = AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=config.ATR_PERIOD)
     atr = atr_indicator.average_true_range().iloc[-1]
     curr_price = df['close'].iloc[-1]
 
     if direction == 'LONG':
-        new_calculated_stop = curr_price - (atr * config.ATR_MULTIPLIER)
-        # Only move stop UP (Ratchet)
-        return max(current_stop, new_calculated_stop)
+        new_stop = curr_price - (atr * config.ATR_MULTIPLIER)
+        return max(current_stop, new_stop)  # Only move UP
     else:
-        new_calculated_stop = curr_price + (atr * config.ATR_MULTIPLIER)
-        # Only move stop DOWN (Ratchet)
-        return min(current_stop, new_calculated_stop)
+        new_stop = curr_price + (atr * config.ATR_MULTIPLIER)
+        return min(current_stop, new_stop)  # Only move DOWN
 
 def calculate_sid_stop_loss(extreme_price, direction):
     """

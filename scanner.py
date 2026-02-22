@@ -370,8 +370,6 @@ def validate_staged_signals(supabase):
                     "is_ready": True,
                     "next_earnings": str(next_earnings) if earnings_resp.data else None,
                     "last_updated": datetime.now().isoformat(),
-                    "stop_loss_strategy": config.STOP_LOSS_STRATEGY,
-                    "exit_strategy": config.EXIT_STRATEGY
                 }).eq("symbol", symbol).execute()
 
                 logger.info(f"✅ {symbol} RSI/MACD aligned. Ready for entry with {config.STOP_LOSS_STRATEGY}.")
