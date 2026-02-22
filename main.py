@@ -10,6 +10,7 @@ import scanner
 import enter
 import exit
 import config
+import reporter
 
 # Setup logging to both file and console
 logging.basicConfig(
@@ -64,6 +65,11 @@ def run_prep_sequence():
     # 4. Scoring: Apply weights (Preferred list, SPY alignment, etc.)
     clients = db_utils.get_clients()
     scanner.score_and_validate_staged(clients['supabase_client'])
+
+    # 5. Trigger Daily Intelligence Report
+    # Running this immediately after scoring ensures the email contains the freshest data.
+    logger.info("Generating and sending daily intelligence report...")
+    reporter.send_report()
 
     logger.info("--- PREPARATION COMPLETE. SETUPS STAGED FOR 15:45 ---")
 
