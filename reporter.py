@@ -3,10 +3,11 @@ import logging
 from datetime import datetime
 import resend
 from dotenv import load_dotenv
-from db_utils import get_clients  # Aligned with modular structure
+from db_utils import get_clients
 import config
 
-# Setup logging with UTF-8 encoding for Windows emoji compatibility
+# 1. Initialize logger at the top level
+# Using UTF-8 encoding for Windows compatibility with emojis in log files
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -15,17 +16,13 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+logger = logging.getLogger(__name__)
 
-# Load environment variables (API keys are pulled from config.py)
 load_dotenv()
-resend.api_key = config.RESEND_API_KEY
 
 
 def get_tv_url(symbol, exchange):
-    """
-    Generates a TradingView chart URL using the format EXCHANGE:SYMBOL.
-    Defaults to NYSE if exchange data is missing.
-    """
+    """Generates a TradingView chart URL with EXCHANGE:SYMBOL format."""
     exch = exchange.upper() if exchange else "NYSE"
     return f"https://www.tradingview.com/chart/?symbol={exch}:{symbol}"
 
@@ -44,27 +41,21 @@ def generate_html_report():
 
     for row in data:
         symbol, direction = row['symbol'], row['direction']
-
-        # Extract exchange from the joined ticker_reference table
         exchange = row.get('ticker_reference', {}).get('exchange', 'NYSE')
 
-        # Accessing the logic_trail structure established in scanner.py
         trail = row.get('logic_trail') or {}
         d_rsi_slope = trail.get('d_rsi_slope', 'N/A')
         w_rsi_slope = trail.get('w_rsi_slope', 'N/A')
         macd_slope = trail.get('macd_slope', 'N/A')
 
-        # Preferred watchlist status from scanner scoring
         is_pref = row.get('preferred_watchlist', False)
 
-        # Earnings display logic using config restriction days
         earn_date_str = row.get('next_earnings')
         if earn_date_str:
             try:
                 earn_dt = datetime.strptime(earn_date_str, '%Y-%m-%d').date()
                 days_left = (earn_dt - datetime.now().date()).days
                 earn_disp = f"{days_left}d ({earn_date_str})"
-                # Highlight if within the configured restriction window
                 if 0 <= days_left <= config.EARNINGS_RESTRICTION_DAYS:
                     earn_disp = f'<span style="color:#e74c3c;font-weight:bold;">⚠️ {earn_disp}</span>'
             except:
@@ -75,8 +66,6 @@ def generate_html_report():
         if row['is_ready']: ready_count += 1
         score = row.get('market_score', 0)
         color = "#27ae60" if direction == "LONG" else "#e74c3c"
-
-        # Strategy metadata locked in by get_signals.py
         sl_strat = row.get('stop_loss_strategy', 'FIXED')
         exit_strat = row.get('exit_strategy', 'FIXED')
 
@@ -116,16 +105,18 @@ def generate_html_report():
 def send_report():
     try:
         html_body = generate_html_report()
-        # Fix: Use single curly braces for the dictionary
+        # Ensure RESEND_API_KEY is set
+        resend.api_key = config.RESEND_API_KEY
         resend.Emails.send({
             "from": f"SidBot Advisor <{config.EMAIL_SENDER}>",
             "to": [config.EMAIL_RECEIVER],
             "subject": f"SidBot Daily Intelligence - {datetime.now().strftime('%b %d')}",
             "html": html_body
         })
-        logger.info("✅ Daily intelligence report sent successfully.")
+        logger.info("Daily intelligence report sent successfully.")
     except Exception as e:
-        logger.error(f"Failed to send report: {e}") # Removed emoji for console safety
+        # Avoid emoji in console error to prevent UnicodeEncodeError on Windows
+        logger.error(f"Failed to send report: {e}")
 
 
 if __name__ == "__main__":
