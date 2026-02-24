@@ -2,7 +2,7 @@ import logging
 from supabase import create_client, Client
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockSnapshotRequest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import config
 
 # Setup logging for db_utils
@@ -76,21 +76,22 @@ def cleanup_expired_signals():
     clients = get_clients()
     supabase = clients['supabase_client']
 
-    # 1. Fetch all symbols and their touch dates
+    # 1. FETCH the data (This defines 'staged')
     staged = supabase.table("sid_method_signal_watchlist").select("symbol, rsi_touch_date").execute()
 
     if not staged.data:
         return
 
-    expiry_threshold = datetime.now() - timedelta(days=config.RSI_SIGNAL_PERIOD)
+    # 2. Use timezone-aware UTC now to avoid comparison errors
+    expiry_threshold = datetime.now(timezone.utc) - timedelta(days=config.RSI_SIGNAL_PERIOD)
     removed_count = 0
 
     for record in staged.data:
         symbol = record['symbol']
-        # Parse ISO format date from DB
-        touch_date = datetime.fromisoformat(record['rsi_touch_date'])
 
-        # 2. Check if the signal has expired
+        # 3. Ensure the parsed date is also UTC aware for the comparison
+        touch_date = datetime.fromisoformat(record['rsi_touch_date']).replace(tzinfo=timezone.utc)
+
         if touch_date < expiry_threshold:
             supabase.table("sid_method_signal_watchlist").delete().eq("symbol", symbol).execute()
             logger.info(f"🧹 Removed expired signal: {symbol} (Touched on {touch_date.date()})")
