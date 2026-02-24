@@ -1,7 +1,8 @@
 import logging
-from supabase import create_client  # Add this specific import
+from supabase import create_client
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockSnapshotRequest
+from datetime import datetime, timedelta
 import config
 
 # Setup logging for db_utils
