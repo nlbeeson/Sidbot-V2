@@ -1,5 +1,5 @@
 import logging
-from supabase import create_client
+from supabase import create_client, Client
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockSnapshotRequest
 from datetime import datetime, timedelta
@@ -8,12 +8,18 @@ import config
 # Setup logging for db_utils
 logger = logging.getLogger(__name__)
 
+
 def get_clients():
     """
     Initializes and returns the Supabase and Alpaca clients.
     """
+    url: str = config.SUPABASE_URL
+    # Ensure config.SUPABASE_KEY is the Service Role Key
+    key: str = config.SUPABASE_KEY
+    supabase: Client = create_client(url, key)
+
     return {
-        "supabase_client": create_client(config.SUPABASE_URL, config.SUPABASE_KEY),
+        "supabase_client": supabase,
         "alpaca_client": StockHistoricalDataClient(config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
     }
 
