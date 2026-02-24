@@ -3,6 +3,7 @@ import logging
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, StopLossRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
+import pandas as pd
 from db_utils import get_clients
 from risk import calculate_sid_stop_loss, calculate_position_size, calculate_atr_stop
 import config
@@ -73,13 +74,24 @@ def execute_sid_entries():
             continue
 
         # 5. Risk Calculation
-        # 1. Determine Strategy (Defaults to config, but could be dynamic)
         sl_strat = config.STOP_LOSS_STRATEGY
         exit_strat = config.EXIT_STRATEGY
 
+        data_resp = supabase.table("market_data") \
+            .select("*") \
+            .eq("symbol", symbol) \
+            .eq("timeframe", "1d") \
+            .order("timestamp", desc=True) \
+            .limit(30) \
+            .execute()
+
+        # Convert to DataFrame and reverse to chronological order
+        df = pd.DataFrame(data_resp.data).iloc[::-1]
+        # ------------------------------------------------------
+
         # 2. Risk Calculation based on Strategy
         if sl_strat == "ATR_TRAIL":
-            # Ensure you have enough data for ATR (usually 14+ periods)
+            # Now 'df' is defined and can be passed to the function
             stop_loss = calculate_atr_stop(df, direction)
         else:
             stop_loss = calculate_sid_stop_loss(signal['extreme_price'], direction)
