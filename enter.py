@@ -126,7 +126,7 @@ def execute_sid_entries():
 
             # Update local count and clean up DB
             current_pos_count += 1
-            supabase.table("sid_method_signal_watchlist").delete().eq("symbol", symbol).execute()
+            supabase.table("sid_method_signal_watchlist").update({"is_active": True}).eq("symbol", symbol).execute()
 
             logger.info(f"🚀 {side} {qty} {symbol} (Score: {signal['market_score']}). Stop: {stop_loss}")
 
