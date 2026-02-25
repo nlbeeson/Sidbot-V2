@@ -116,22 +116,25 @@ for day in weekdays:
 
 def main():
     logger.info("SidBot Orchestrator active on Ubuntu Droplet (EST).")
-    logger.info(f"Limits: Max Positions={config.MAX_OPEN_POSITIONS}, Shorting={config.ALLOW_SHORT}")
+
+    last_exit_check = 0  # Track the last time we ran the exit scan
 
     while True:
         try:
-            # Run scheduled tasks (Prep and Entry)
+            # 1. High-frequency heartbeat for the scheduler (every 1 second)
             schedule.run_pending()
 
-            # Continuous Exit Monitoring during market hours
-            run_exit_logic()
+            # 2. Lower-frequency check for exits
+            current_time = time.time()
+            if current_time - last_exit_check >= 300:  # 300 seconds = 5 minutes
+                run_exit_logic()
+                last_exit_check = current_time
 
-            # Sleep 60 seconds to manage CPU and API rate limits
-            time.sleep(60)
+            # 3. Short sleep to keep CPU usage low and scheduler accurate
+            time.sleep(1)
 
         except Exception as e:
             logger.error(f"Critical error in main loop: {e}")
-            # Pause briefly before attempting to resume
             time.sleep(30)
 
 
