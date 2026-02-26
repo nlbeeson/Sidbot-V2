@@ -71,8 +71,15 @@ def sync_latest_market_data():
 
 def cleanup_expired_signals():
     """
-    Removes symbols from the watchlist where the time elapsed since
-    rsi_touch_date exceeds the RSI_SIGNAL_PERIOD (28 days).
+    Safety-net cleanup: removes non-active signals older than SIGNAL_EXPIRY_DAYS.
+
+    Primary signal expiry is now RSI-based: validate_staged_signals() in scanner.py
+    deletes a signal the moment RSI crosses the momentum room threshold (>45 for LONG,
+    <55 for SHORT), meaning no room for the trade to reach RSI 50.
+
+    This function is a fallback for signals that slipped through the RSI check
+    (e.g., market data gaps, bot downtime). SIGNAL_EXPIRY_DAYS is intentionally
+    generous (60 days) since most signals will already be gone by RSI-based expiry.
     """
     clients = get_clients()
     supabase = clients['supabase_client']
@@ -84,7 +91,7 @@ def cleanup_expired_signals():
         return
 
     # 2. Use timezone-aware UTC now
-    expiry_threshold = datetime.now(timezone.utc) - timedelta(days=config.RSI_SIGNAL_PERIOD)
+    expiry_threshold = datetime.now(timezone.utc) - timedelta(days=config.SIGNAL_EXPIRY_DAYS)
     removed_count = 0
 
     for record in staged.data:

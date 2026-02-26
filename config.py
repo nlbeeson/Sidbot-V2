@@ -54,3 +54,14 @@ WEIGHT_SECTOR_ALIGNMENT = 1
 
 # --- EXIT STRATEGY ---
 RSI_EXIT_TARGET = 50         # Close position when Daily RSI crosses this
+
+# Early exit: close the full position if RSI reverses 2 consecutive bars before reaching RSI_EXIT_TARGET.
+# Mirrors the mentor's manual "2-day RSI reversal" rule from the backtest.
+# Use False to let all positions run to RSI 50 or stop loss (pure FIXED behavior).
+# Skipped during MOMENTUM Phase 2 (that phase manages its own reversal exit).
+EARLY_EXIT_ON_RSI_REVERSAL = False
+
+# Signal expiry: safety-net time limit before a signal is force-deleted by the daily cleanup.
+# Primary expiry is now RSI-based (scanner deletes when RSI crosses the momentum room threshold).
+# This catches any signals that slipped through the RSI check (e.g., data gaps, bot downtime).
+SIGNAL_EXPIRY_DAYS = 60

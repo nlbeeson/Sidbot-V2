@@ -286,17 +286,24 @@ def validate_staged_signals(supabase):
             # 4. MOMENTUM ROOM GATE (Fix #7)
             # Ensures RSI hasn't already recovered too far from the extreme,
             # leaving insufficient room for the trade to run to RSI 50 target.
+            # If RSI has crossed the threshold, the signal is permanently expired and deleted.
+            # Primary signal expiry mechanism — replaces the old fixed 28-day time limit.
+            # Rationale: once RSI is above 45 (LONG) or below 55 (SHORT), there is no room
+            # left to profit, and no amount of waiting will make the setup valid again.
+            # A new signal will be created by get_signals.py if RSI dips back to extreme levels.
             curr_rsi = rsi_daily.iloc[-1]
             if direction == 'LONG' and curr_rsi > config.RSI_MOMENTUM_ROOM_LONG:
+                supabase.table("sid_method_signal_watchlist").delete().eq("symbol", symbol).execute()
                 logger.info(
-                    f"🚫 {symbol} blocked: Daily RSI {curr_rsi:.1f} exceeds momentum room "
-                    f"threshold ({config.RSI_MOMENTUM_ROOM_LONG}) for LONG."
+                    f"🗑️ {symbol} expired: RSI {curr_rsi:.1f} crossed above momentum room "
+                    f"threshold ({config.RSI_MOMENTUM_ROOM_LONG}). Signal removed."
                 )
                 continue
             if direction == 'SHORT' and curr_rsi < config.RSI_MOMENTUM_ROOM_SHORT:
+                supabase.table("sid_method_signal_watchlist").delete().eq("symbol", symbol).execute()
                 logger.info(
-                    f"🚫 {symbol} blocked: Daily RSI {curr_rsi:.1f} below momentum room "
-                    f"threshold ({config.RSI_MOMENTUM_ROOM_SHORT}) for SHORT."
+                    f"🗑️ {symbol} expired: RSI {curr_rsi:.1f} fell below momentum room "
+                    f"threshold ({config.RSI_MOMENTUM_ROOM_SHORT}). Signal removed."
                 )
                 continue
 

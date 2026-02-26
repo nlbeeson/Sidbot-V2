@@ -76,15 +76,34 @@ def monitor_and_execute_exits():
 
             # 3. Calculate Indicators
             rsi_series = RSIIndicator(close=df['close'], window=14).rsi()
-            curr_rsi, prev_rsi = rsi_series.iloc[-1], rsi_series.iloc[-2]
+            curr_rsi, prev_rsi, prev_prev_rsi = rsi_series.iloc[-1], rsi_series.iloc[-2], rsi_series.iloc[-3]
 
             # 4. Exit Logic
             exit_side = OrderSide.SELL if side == 'LONG' else OrderSide.BUY
             at_rsi_target = (side == 'LONG' and curr_rsi >= config.RSI_EXIT_TARGET) or \
                             (side == 'SHORT' and curr_rsi <= config.RSI_EXIT_TARGET)
 
+            # Hoisted here so the early exit gate can reference it without entering the MOMENTUM block
+            partial_done = signal_data.get('partial_exit_done', False)
+
+            # --- EARLY EXIT: 2-day RSI reversal (configurable) ---
+            # Mirrors the mentor's manual "exit if RSI moves against trade 2 days in a row".
+            # Only fires BEFORE RSI 50 is reached, and NOT during MOMENTUM Phase 2
+            # (Phase 2 manages its own momentum-reversal exit after the partial close).
+            if config.EARLY_EXIT_ON_RSI_REVERSAL and not at_rsi_target and not partial_done:
+                two_day_reversal = (
+                    (side == 'LONG' and curr_rsi < prev_rsi and prev_rsi < prev_prev_rsi) or
+                    (side == 'SHORT' and curr_rsi > prev_rsi and prev_rsi > prev_prev_rsi)
+                )
+                if two_day_reversal:
+                    trading_client.submit_order(
+                        MarketOrderRequest(symbol=symbol, qty=qty, side=exit_side,
+                                           time_in_force=TimeInForce.GTC))
+                    supabase.table("sid_method_signal_watchlist").update({"is_active": False}).eq("symbol", symbol).execute()
+                    logger.info(f"🚪 EARLY EXIT (2-day RSI reversal): Closed {symbol} at RSI {curr_rsi:.2f}")
+                    continue
+
             if exit_strat == "MOMENTUM":
-                partial_done = signal_data.get('partial_exit_done', False)
                 fill_price = float(signal_data['fill_price']) if signal_data.get('fill_price') else None
 
                 if not partial_done and at_rsi_target:
