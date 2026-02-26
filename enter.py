@@ -2,7 +2,9 @@ import os
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, StopLossRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.data.requests import StockLatestTradeRequest
 import pandas as pd
+from ta.momentum import RSIIndicator
 from db_utils import get_clients
 from risk import calculate_sid_stop_loss, calculate_position_size, calculate_atr_stop
 import config
@@ -90,7 +92,16 @@ def execute_sid_entries():
 
         # Convert to DataFrame and reverse to chronological order
         df = pd.DataFrame(data_resp.data).iloc[::-1]
-        # ------------------------------------------------------
+
+        # RSI room check — re-evaluated at entry time, not just at validation.
+        # A signal marked is_ready=True days ago may have RSI drift too close to 50.
+        curr_rsi = RSIIndicator(close=df['close'], window=config.RSI_PERIOD).rsi().iloc[-1]
+        if direction == 'LONG' and curr_rsi > config.RSI_MOMENTUM_ROOM_LONG:
+            logger.info(f"🚫 Skipping {symbol}: RSI {curr_rsi:.1f} too close to exit target for LONG entry.")
+            continue
+        if direction == 'SHORT' and curr_rsi < config.RSI_MOMENTUM_ROOM_SHORT:
+            logger.info(f"🚫 Skipping {symbol}: RSI {curr_rsi:.1f} too close to exit target for SHORT entry.")
+            continue
 
         # 2. Risk Calculation based on Strategy
         if sl_strat == "ATR_TRAIL":
@@ -106,7 +117,12 @@ def execute_sid_entries():
             "stop_loss": stop_loss
         }).eq("symbol", symbol).execute()
 
-        entry_price = float(signal['entry_price'])
+        # Fetch live price from Alpaca at entry time — one API call per trade entered,
+        # not per symbol scanned, so rate limits are not a concern.
+        latest = clients['alpaca_client'].get_stock_latest_trade(
+            StockLatestTradeRequest(symbol_or_symbols=symbol)
+        )
+        entry_price = float(latest[symbol].price)
         qty = calculate_position_size(equity, config.RISK_PER_TRADE, entry_price, stop_loss)
 
         if qty <= 0:
@@ -129,7 +145,10 @@ def execute_sid_entries():
             # Update local count and symbol set, then clean up DB
             current_pos_count += 1
             open_position_symbols.add(symbol)  # Fix #4: keep set in sync for this run
-            supabase.table("sid_method_signal_watchlist").update({"is_active": True}).eq("symbol", symbol).execute()
+            supabase.table("sid_method_signal_watchlist").update({
+                "is_active": True,
+                "fill_price": entry_price  # Stored for MOMENTUM break-even stop calculation
+            }).eq("symbol", symbol).execute()
 
             logger.info(f"🚀 {side} {qty} {symbol} (Score: {signal['market_score']}). Stop: {stop_loss}")
 

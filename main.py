@@ -64,9 +64,13 @@ def run_prep_sequence():
     # 2. Discovery: Find current RSI extremes (<=30 or >=70)
     get_signals.populate_sid_extremes()
 
-    # Fetch clients once and reuse for both scanner calls below
+    # Fetch clients once and reuse for all scanner calls below
     clients = db_utils.get_clients()
     supabase = clients['supabase_client']
+
+    # 2b. Update extreme prices on staged signals — tracks the absolute lowest low
+    # (LONG) or highest high (SHORT) since the RSI touch, which sets the FIXED_WHOLE stop.
+    scanner.update_staged_extreme_prices(supabase)
 
     # 3. Validation: Check momentum gates (Daily/Weekly RSI & MACD Slopes)
     # Fix #1: validate_staged_signals requires supabase as its first argument

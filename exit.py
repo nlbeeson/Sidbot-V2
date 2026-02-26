@@ -1,4 +1,5 @@
 import os
+import math
 import pandas as pd
 from datetime import datetime
 from alpaca.trading.client import TradingClient
@@ -16,15 +17,14 @@ logger = get_logger(__name__)
 def check_momentum_exit(side, curr_rsi, prev_rsi):
     """
     Returns True if momentum has reversed against the trade.
-    LONG: exit when RSI is at/above target AND starting to fall (momentum peak).
-    SHORT: exit when RSI is at/above target AND still rising (confirmed upward cross).
-    Fix #8: SHORT condition was inverted — curr_rsi <= target would exit before
-    the RSI even crossed 50. Corrected to >= so it triggers on/after the cross.
+    LONG:  hold while RSI rises above 50; exit when it starts to fall (peak confirmed).
+    SHORT: hold while RSI falls below 50; exit when it starts to rise (bottom confirmed).
+    Both directions mirror each other — wait past RSI_EXIT_TARGET, exit on reversal.
     """
     if side == 'LONG':
         return curr_rsi >= config.RSI_EXIT_TARGET and curr_rsi < prev_rsi
     else:  # SHORT
-        return curr_rsi >= config.RSI_EXIT_TARGET and curr_rsi > prev_rsi
+        return curr_rsi <= config.RSI_EXIT_TARGET and curr_rsi > prev_rsi
 
 
 def monitor_and_execute_exits():
@@ -52,7 +52,7 @@ def monitor_and_execute_exits():
         try:
             # 1. Fetch signal data safely
             response = supabase.table("sid_method_signal_watchlist") \
-                .select("exit_strategy, stop_loss_strategy, stop_loss") \
+                .select("exit_strategy, stop_loss_strategy, stop_loss, fill_price, partial_exit_done") \
                 .eq("symbol", symbol).maybe_single().execute()
 
             # Fix: Ensure the response object exists before checking .data
@@ -79,20 +79,61 @@ def monitor_and_execute_exits():
             curr_rsi, prev_rsi = rsi_series.iloc[-1], rsi_series.iloc[-2]
 
             # 4. Exit Logic
-            should_exit = False
-            if exit_strat == "MOMENTUM":
-                should_exit = check_momentum_exit(side, curr_rsi, prev_rsi)
-            else:
-                if (side == 'LONG' and curr_rsi >= config.RSI_EXIT_TARGET) or \
-                        (side == 'SHORT' and curr_rsi <= config.RSI_EXIT_TARGET):
-                    should_exit = True
+            exit_side = OrderSide.SELL if side == 'LONG' else OrderSide.BUY
+            at_rsi_target = (side == 'LONG' and curr_rsi >= config.RSI_EXIT_TARGET) or \
+                            (side == 'SHORT' and curr_rsi <= config.RSI_EXIT_TARGET)
 
-            if should_exit:
-                exit_side = OrderSide.SELL if side == 'LONG' else OrderSide.BUY
-                trading_client.submit_order(
-                    MarketOrderRequest(symbol=symbol, qty=qty, side=exit_side, time_in_force=TimeInForce.GTC))
-                logger.info(f"🛑 EXIT ({exit_strat}): Closed {symbol} at RSI {curr_rsi:.2f}")
-                continue
+            if exit_strat == "MOMENTUM":
+                partial_done = signal_data.get('partial_exit_done', False)
+                fill_price = float(signal_data['fill_price']) if signal_data.get('fill_price') else None
+
+                if not partial_done and at_rsi_target:
+                    # Phase 1: RSI crossed 50 — close 50%, move stop to break even.
+                    partial_qty = math.floor(qty / 2)
+                    if partial_qty > 0:
+                        trading_client.submit_order(
+                            MarketOrderRequest(symbol=symbol, qty=partial_qty, side=exit_side,
+                                               time_in_force=TimeInForce.GTC))
+                        logger.info(f"📊 PARTIAL EXIT: Closed {partial_qty} {symbol} at RSI {curr_rsi:.2f}")
+
+                    # Move stop to break even whether or not a partial order was submitted
+                    # (position may be 1 share — still want the stop moved).
+                    if fill_price:
+                        supabase.table("sid_method_signal_watchlist").update({
+                            "partial_exit_done": True,
+                            "stop_loss": fill_price
+                        }).eq("symbol", symbol).execute()
+                        orders = trading_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
+                        for order in orders:
+                            if order.symbol == symbol and order.type.value == 'stop':
+                                trading_client.replace_order_by_id(
+                                    order.id, ReplaceOrderRequest(stop_price=fill_price))
+                                logger.info(f"🔄 BREAK EVEN: {symbol} stop moved to {fill_price}")
+                                break
+                    else:
+                        # fill_price missing — mark done so we don't loop on this forever
+                        supabase.table("sid_method_signal_watchlist").update({
+                            "partial_exit_done": True
+                        }).eq("symbol", symbol).execute()
+                        logger.warning(f"⚠️ {symbol}: fill_price missing, cannot set break-even stop.")
+
+                elif partial_done and check_momentum_exit(side, curr_rsi, prev_rsi):
+                    # Phase 2: Momentum reversed — close remaining position.
+                    trading_client.submit_order(
+                        MarketOrderRequest(symbol=symbol, qty=qty, side=exit_side,
+                                           time_in_force=TimeInForce.GTC))
+                    supabase.table("sid_method_signal_watchlist").update({"is_active": False}).eq("symbol", symbol).execute()
+                    logger.info(f"🛑 MOMENTUM EXIT (remaining 50%): Closed {symbol} at RSI {curr_rsi:.2f}")
+                    continue
+
+            else:  # FIXED
+                if at_rsi_target:
+                    trading_client.submit_order(
+                        MarketOrderRequest(symbol=symbol, qty=qty, side=exit_side,
+                                           time_in_force=TimeInForce.GTC))
+                    supabase.table("sid_method_signal_watchlist").update({"is_active": False}).eq("symbol", symbol).execute()
+                    logger.info(f"🛑 FIXED EXIT: Closed {symbol} at RSI {curr_rsi:.2f}")
+                    continue
 
             # 5. Ratchet Logic
             if sl_strat == "ATR_TRAIL" and stored_stop:

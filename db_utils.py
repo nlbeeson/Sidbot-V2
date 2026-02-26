@@ -77,8 +77,8 @@ def cleanup_expired_signals():
     clients = get_clients()
     supabase = clients['supabase_client']
 
-    # 1. Fetch the data
-    staged = supabase.table("sid_method_signal_watchlist").select("symbol, rsi_touch_date").execute()
+    # 1. Fetch non-active records only — skip is_active=True (open positions)
+    staged = supabase.table("sid_method_signal_watchlist").select("symbol, rsi_touch_date").neq("is_active", True).execute()
 
     if not staged or not staged.data:
         return

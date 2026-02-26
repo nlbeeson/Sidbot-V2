@@ -53,6 +53,13 @@ def populate_sid_extremes():
 
             # 5. Upsert to sid_method_signal_watchlist
             if direction:
+                # Skip if there is already an open position for this symbol — avoids
+                # overwriting the live record's metadata (entry_price, extreme_price, etc.)
+                existing = supabase.table("sid_method_signal_watchlist") \
+                    .select("is_active").eq("symbol", symbol).maybe_single().execute()
+                if existing.data and existing.data.get('is_active'):
+                    continue
+
                 # extreme_price is the high/low at the time of the RSI touch
                 extreme_val = df['low'].iloc[-1] if direction == 'LONG' else df['high'].iloc[-1]
 
