@@ -18,12 +18,13 @@ logger = get_logger(__name__)
 # Eastern timezone for all market hours calculations
 EST = ZoneInfo("America/New_York")
 
-# Define the days of the week for the bot to operate
-weekdays = [schedule.every().monday,
-            schedule.every().tuesday,
-            schedule.every().wednesday,
-            schedule.every().thursday,
-            schedule.every().friday]
+# Day names used to create fresh Job objects per time slot.
+# IMPORTANT: Do NOT store schedule.every().monday etc. in a shared list and
+# reuse it across multiple .at().do() loops. The schedule library's .at() and
+# .do() methods modify the Job object IN PLACE, so reusing the same Job objects
+# in a second loop overwrites the time and function set by the first loop.
+# Each call to schedule.every() must create a brand-new Job object.
+_weekday_names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
 
 def is_market_open():
     """
@@ -108,16 +109,16 @@ def run_daily_maintenance():
 # --- SCHEDULING ---
 
 # 15:30: Data Sync and Signal Scoring
-for day in weekdays:
-    day.at("15:30").do(run_prep_sequence)
+for day in _weekday_names:
+    getattr(schedule.every(), day).at("15:30").do(run_prep_sequence)
 
 # 15:45: Final Entry Execution
-for day in weekdays:
-    day.at("15:45").do(run_execution_sequence)
+for day in _weekday_names:
+    getattr(schedule.every(), day).at("15:45").do(run_execution_sequence)
 
-# Add a 16:30 schedule for the cleanup script
-for day in weekdays:
-    day.at("16:30").do(run_daily_maintenance)
+# 16:30: End-of-day database cleanup
+for day in _weekday_names:
+    getattr(schedule.every(), day).at("16:30").do(run_daily_maintenance)
 
 
 def main():
