@@ -22,8 +22,8 @@ ALLOW_SHORT = True           # Toggle to enable/disable short selling in the str
 
 # --- SID METHOD PARAMETERS ---
 # --- STRATEGY SELECTION ---
-STOP_LOSS_STRATEGY = "ATR_TRAIL"  # Options: "FIXED_WHOLE" or "ATR_TRAIL"
-EXIT_STRATEGY = "FIXED" # Options: "FIXED" (RSI 50 crossover) or "MOMENTUM" (Remains in trade past RSI  until RSI momentum reverses)
+STOP_LOSS_STRATEGY = "FIXED_WHOLE"  # Options: "FIXED_WHOLE" or "ATR_TRAIL"
+EXIT_STRATEGY = "MOMENTUM"          # Options: "FIXED" (exit 100% at RSI 50) or "MOMENTUM" (exit 50% at RSI 50 + break-even stop, remaining 50% on momentum reversal)
 
 # --- ATR SPECIFIC ---
 ATR_PERIOD = 14
