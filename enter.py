@@ -103,7 +103,6 @@ def execute_sid_entries():
             "stop_loss": stop_loss
         }).eq("symbol", symbol).execute()
 
-        stop_loss = calculate_sid_stop_loss(signal['extreme_price'], direction)
         entry_price = float(signal['entry_price'])
         qty = calculate_position_size(equity, config.RISK_PER_TRADE, entry_price, stop_loss)
 
