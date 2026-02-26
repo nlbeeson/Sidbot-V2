@@ -1,7 +1,6 @@
 import time
-import logging
-import datetime
 from datetime import datetime, time as dt_time
+from zoneinfo import ZoneInfo  # Fix #9: explicit timezone for EST market hours check
 import schedule
 
 # Import modular strategy files
@@ -12,17 +11,12 @@ import enter
 import exit
 import config
 import reporter
+from unified_logger import get_logger
 
-# Setup logging to both file and console
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler("sidbot.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+# Eastern timezone for all market hours calculations
+EST = ZoneInfo("America/New_York")
 
 # Define the days of the week for the bot to operate
 weekdays = [schedule.every().monday,
@@ -32,12 +26,16 @@ weekdays = [schedule.every().monday,
             schedule.every().friday]
 
 def is_market_open():
-    """Checks if current time is within regular NYSE hours (9:30 AM - 4:00 PM EST)."""
-    now = datetime.now().time()
+    """
+    Checks if current time is within regular NYSE hours (9:30 AM - 4:00 PM EST).
+    Fix #9: uses explicit EST/EDT timezone via ZoneInfo so this works correctly
+    on UTC servers (e.g. DigitalOcean droplets) without relying on system locale.
+    """
+    now_est = datetime.now(EST)
     market_start = dt_time(9, 30)
     market_end = dt_time(16, 0)
     # weekday() < 5 ensures Monday (0) through Friday (4)
-    return market_start <= now <= market_end and datetime.now().weekday() < 5
+    return market_start <= now_est.time() <= market_end and now_est.weekday() < 5
 
 
 def run_exit_logic():
@@ -66,12 +64,16 @@ def run_prep_sequence():
     # 2. Discovery: Find current RSI extremes (<=30 or >=70)
     get_signals.populate_sid_extremes()
 
+    # Fetch clients once and reuse for both scanner calls below
+    clients = db_utils.get_clients()
+    supabase = clients['supabase_client']
+
     # 3. Validation: Check momentum gates (Daily/Weekly RSI & MACD Slopes)
-    scanner.validate_staged_signals()
+    # Fix #1: validate_staged_signals requires supabase as its first argument
+    scanner.validate_staged_signals(supabase)
 
     # 4. Scoring: Apply weights (Preferred list, SPY alignment, etc.)
-    clients = db_utils.get_clients()
-    scanner.score_and_validate_staged(clients['supabase_client'])
+    scanner.score_and_validate_staged(supabase)
 
     # 5. Trigger Daily Intelligence Report
     # Running this immediately after scoring ensures the email contains the freshest data.

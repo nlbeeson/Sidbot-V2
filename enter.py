@@ -1,5 +1,4 @@
 import os
-import logging
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, StopLossRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
@@ -7,10 +6,9 @@ import pandas as pd
 from db_utils import get_clients
 from risk import calculate_sid_stop_loss, calculate_position_size, calculate_atr_stop
 import config
+from unified_logger import get_logger
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def execute_sid_entries():
@@ -38,6 +36,9 @@ def execute_sid_entries():
 
         open_positions = trading_client.get_all_positions()
         current_pos_count = len(open_positions)
+        # Fix #4: use a set for O(1) lookups; update it locally after each entry
+        # so subsequent iterations in the same run see the new position
+        open_position_symbols = {p.symbol for p in open_positions}
     except Exception as e:
         logger.error(f"Could not fetch account/position data: {e}")
         return
@@ -70,7 +71,9 @@ def execute_sid_entries():
             continue
 
         # 4. Check if already in a position for this symbol
-        if any(p.symbol == symbol for p in open_positions):
+        # Fix #4: check against the locally-maintained set (updated after each entry)
+        # instead of the stale list fetched once at the start of the run
+        if symbol in open_position_symbols:
             continue
 
         # 5. Risk Calculation
@@ -123,8 +126,9 @@ def execute_sid_entries():
 
             trading_client.submit_order(order_data=order_data)
 
-            # Update local count and clean up DB
+            # Update local count and symbol set, then clean up DB
             current_pos_count += 1
+            open_position_symbols.add(symbol)  # Fix #4: keep set in sync for this run
             supabase.table("sid_method_signal_watchlist").update({"is_active": True}).eq("symbol", symbol).execute()
 
             logger.info(f"🚀 {side} {qty} {symbol} (Score: {signal['market_score']}). Stop: {stop_loss}")

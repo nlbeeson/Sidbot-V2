@@ -1,35 +1,30 @@
 import os
-import logging
 import pandas as pd
 from datetime import datetime
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, ReplaceOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest, ReplaceOrderRequest, GetOrdersRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 from ta.momentum import RSIIndicator
 from db_utils import get_clients
-import risk  # Math engine for ATR Trailing logic
+import risk
 import config
+from unified_logger import get_logger
 
-# Setup logging with UTF-8 for Windows emoji compatibility
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler("sidbot.log", encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def check_momentum_exit(side, curr_rsi, prev_rsi):
     """
     Returns True if momentum has reversed against the trade.
+    LONG: exit when RSI is at/above target AND starting to fall (momentum peak).
+    SHORT: exit when RSI is at/above target AND still rising (confirmed upward cross).
+    Fix #8: SHORT condition was inverted — curr_rsi <= target would exit before
+    the RSI even crossed 50. Corrected to >= so it triggers on/after the cross.
     """
     if side == 'LONG':
         return curr_rsi >= config.RSI_EXIT_TARGET and curr_rsi < prev_rsi
-    else:
-        return curr_rsi <= config.RSI_EXIT_TARGET and curr_rsi > prev_rsi
+    else:  # SHORT
+        return curr_rsi >= config.RSI_EXIT_TARGET and curr_rsi > prev_rsi
 
 
 def monitor_and_execute_exits():
@@ -49,7 +44,9 @@ def monitor_and_execute_exits():
 
     for pos in positions:
         symbol = pos.symbol
-        side = pos.side.upper()
+        # Fix #2: pos.side is a PositionSide enum; .value extracts the string ("long"/"short")
+        # before calling .upper() — calling .upper() directly on the enum raises AttributeError
+        side = pos.side.value.upper()
         qty = abs(float(pos.qty))
 
         try:
@@ -103,7 +100,11 @@ def monitor_and_execute_exits():
                 if new_stop != stored_stop:
                     supabase.table("sid_method_signal_watchlist").update({"stop_loss": new_stop}).eq("symbol",
                                                                                                      symbol).execute()
-                    orders = trading_client.get_orders()
+                    # Fix #5: filter to OPEN orders only so we don't try to replace
+                    # a stop that has already been filled or cancelled
+                    orders = trading_client.get_orders(
+                        GetOrdersRequest(status=QueryOrderStatus.OPEN)
+                    )
                     for order in orders:
                         if order.symbol == symbol and order.type.value == 'stop':
                             trading_client.replace_order_by_id(order.id, ReplaceOrderRequest(stop_price=new_stop))

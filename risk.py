@@ -1,9 +1,9 @@
 import math
-import logging
 from ta.volatility import AverageTrueRange
 import config
+from unified_logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def calculate_atr_stop(df, direction):

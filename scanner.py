@@ -1,16 +1,15 @@
-import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import numpy as np
-import pandas as pd
 import pandas as pd
 from db_utils import get_clients
 from pref_watchlist import PREF_WATCHLIST
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
 import config
+from unified_logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def calculate_daily_rsi(df, window=config.RSI_PERIOD):
@@ -109,7 +108,7 @@ def update_staged_extreme_prices(supabase):
                 supabase.table("sid_method_signal_watchlist") \
                     .update({
                     "extreme_price": new_extreme,
-                    "last_updated": datetime.now().isoformat()
+                    "last_updated": datetime.now(timezone.utc).isoformat()
                 }) \
                     .eq("symbol", symbol) \
                     .execute()
@@ -151,18 +150,20 @@ def detect_double_top_bottom(df, direction, threshold=0.015):
     """
     if direction == 'LONG':
         # Double Bottom: Look for two similar lows with a peak between them
-        recent_lows = df['low'].rolling(window=5, center=True).min().dropna().unique()
-        if len(recent_lows) >= 2:
-            last_low = df['low'].iloc[-10:].min()
-            prev_low = df['low'].iloc[-40:-10].min()
-            diff = abs(last_low - prev_low) / prev_low
-            if diff <= threshold: return config.WEIGHT_REVERSAL_PATTERN
+        # Fix #10: removed unused rolling window result that was never referenced
+        last_low = df['low'].iloc[-10:].min()
+        prev_low = df['low'].iloc[-40:-10].min()
+        # Guard against zero division
+        if prev_low > 0 and abs(last_low - prev_low) / prev_low <= threshold:
+            return config.WEIGHT_REVERSAL_PATTERN
     else:
         # Double Top: Look for two similar highs with a trough between them
         last_high = df['high'].iloc[-10:].max()
         prev_high = df['high'].iloc[-40:-10].max()
-        diff = abs(last_high - prev_high) / prev_high
-        if diff <= threshold: return config.WEIGHT_REVERSAL_PATTERN
+        if prev_high > 0:
+            diff = abs(last_high - prev_high) / prev_high
+            if diff <= threshold:
+                return config.WEIGHT_REVERSAL_PATTERN
     return 0
 
 
@@ -202,8 +203,12 @@ def score_and_validate_staged(supabase):
         direction = signal['direction']
 
         # 1. Fetch data
-        data = supabase.table("market_data").select("*").eq("symbol", symbol).order("timestamp", desc=True).limit(
-            60).execute()
+        # Fix #3: added timeframe="1d" filter — without it, any intraday data in the
+        # table would corrupt MACD/RSI calculations
+        data = supabase.table("market_data").select("*") \
+            .eq("symbol", symbol) \
+            .eq("timeframe", "1d") \
+            .order("timestamp", desc=True).limit(60).execute()
         df = pd.DataFrame(data.data).iloc[::-1]
 
         # 2. Calculate Weights
@@ -217,7 +222,7 @@ def score_and_validate_staged(supabase):
 
         total_score = pref_pts + macd_pts + pattern_pts + spy_pts + sector_pts
 
-        # 3. Update the database
+        # 3. Update the database — Fix #6: use UTC-aware datetime
         supabase.table("sid_method_signal_watchlist").update({
             "market_score": total_score,
             "preferred_watchlist": pref_pts > 0,
@@ -225,7 +230,7 @@ def score_and_validate_staged(supabase):
             "pattern_confirmed": pattern_pts > 0,
             "spy_alignment": spy_aligned,
             "sector_alignment": sector_aligned,
-            "last_updated": datetime.now().isoformat()
+            "last_updated": datetime.now(timezone.utc).isoformat()
         }).eq("symbol", symbol).execute()
 
         logger.info(
@@ -252,13 +257,13 @@ def validate_staged_signals(supabase):
             # 1. EARNINGS CHECK (14-Day Rule)
             earnings_resp = supabase.table("earnings_calendar") \
                 .select("report_date").eq("symbol", symbol) \
-                .gte("report_date", datetime.now().date().isoformat()) \
+                .gte("report_date", datetime.now(timezone.utc).date().isoformat()) \
                 .order("report_date").limit(1).execute()
 
             next_earnings = None
             if earnings_resp.data:
                 next_earnings = datetime.strptime(earnings_resp.data[0]['report_date'], '%Y-%m-%d').date()
-                days_to_earnings = (next_earnings - datetime.now().date()).days
+                days_to_earnings = (next_earnings - datetime.now(timezone.utc).date()).days
                 if days_to_earnings <= config.EARNINGS_RESTRICTION_DAYS:
                     logger.info(f"🚫 {symbol} blocked: Earnings in {days_to_earnings} days.")
                     continue  # <-- continue is now OUTSIDE momentum block
@@ -278,25 +283,43 @@ def validate_staged_signals(supabase):
             rsi_weekly = calculate_weekly_rsi(df)
             macd_data = calculate_daily_macd(df)
 
-            # 4. CHECK SLOPES — direction-aware for all three
+            # 4. MOMENTUM ROOM GATE (Fix #7)
+            # Ensures RSI hasn't already recovered too far from the extreme,
+            # leaving insufficient room for the trade to run to RSI 50 target.
+            curr_rsi = rsi_daily.iloc[-1]
+            if direction == 'LONG' and curr_rsi > config.RSI_MOMENTUM_ROOM_LONG:
+                logger.info(
+                    f"🚫 {symbol} blocked: Daily RSI {curr_rsi:.1f} exceeds momentum room "
+                    f"threshold ({config.RSI_MOMENTUM_ROOM_LONG}) for LONG."
+                )
+                continue
+            if direction == 'SHORT' and curr_rsi < config.RSI_MOMENTUM_ROOM_SHORT:
+                logger.info(
+                    f"🚫 {symbol} blocked: Daily RSI {curr_rsi:.1f} below momentum room "
+                    f"threshold ({config.RSI_MOMENTUM_ROOM_SHORT}) for SHORT."
+                )
+                continue
+
+            # 5. CHECK SLOPES — direction-aware for all three
             d_rsi_turning = rsi_daily.iloc[-1] > rsi_daily.iloc[-2] if direction == 'LONG' \
                 else rsi_daily.iloc[-1] < rsi_daily.iloc[-2]
 
             w_rsi_turning = False
             if rsi_weekly is not None and len(rsi_weekly) >= 2:
                 w_rsi_turning = rsi_weekly.iloc[-1] > rsi_weekly.iloc[-2] if direction == 'LONG' \
-                    else rsi_weekly.iloc[-1] < rsi_weekly.iloc[-2]  # ← THE FIX
+                    else rsi_weekly.iloc[-1] < rsi_weekly.iloc[-2]
 
             macd_line = macd_data['line']
             macd_turning = macd_line.iloc[-1] > macd_line.iloc[-2] if direction == 'LONG' \
                 else macd_line.iloc[-1] < macd_line.iloc[-2]
 
-            # 5. ALL THREE MUST ALIGN
+            # 6. ALL THREE MUST ALIGN
             if all([d_rsi_turning, w_rsi_turning, macd_turning]):
+                # Fix #6: use UTC-aware datetime
                 supabase.table("sid_method_signal_watchlist").update({
                     "is_ready": True,
                     "next_earnings": str(next_earnings) if next_earnings else None,
-                    "last_updated": datetime.now().isoformat(),
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
                     "logic_trail": {
                         "event": "Alignments Confirmed",
                         "d_rsi_slope": "UP" if d_rsi_turning else "DOWN",

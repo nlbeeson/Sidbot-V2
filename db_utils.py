@@ -1,13 +1,12 @@
-import logging
 from supabase import create_client, Client
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockSnapshotRequest
 from datetime import datetime, timedelta, timezone
 
 import config
+from unified_logger import get_logger
 
-# Setup logging for db_utils
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def get_clients():
@@ -32,7 +31,8 @@ def sync_latest_market_data():
     """
     clients = get_clients()
     supabase = clients['supabase_client']
-    alpaca_data_client = StockHistoricalDataClient(config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
+    # Fix #11: reuse the client from get_clients() instead of creating a duplicate
+    alpaca_data_client = clients['alpaca_client']
 
     # 1. Get all symbols to update
     tickers_resp = supabase.table("ticker_reference").select("symbol").execute()
