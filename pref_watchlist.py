@@ -9,5 +9,5 @@ PREF_WATCHLIST = {
         'XLI', 'COST', 'DG', 'ELF', 'KHC', 'KO', 'MDLZ', 'PEP', 'PG', 'WMT', 'XLP', 'BKR', 'EOG', 'SLB', 'VLO', 'XLE',
         'DOW', 'FCX', 'NEM', 'XLB', 'AMT', 'AVB', 'CCI', 'PLD', 'XLRE', 'AEP', 'D', 'SO', 'XLU', 'DIA', 'IWM', 'QQQ',
         'SPY',
-        'SH', 'SQQQ', 'TNA', 'TQQQ', 'TZA', 'GDX', 'GLD', 'NUGT', 'SLV', 'QYLD',
+        'SH', 'SQQQ', 'TNA', 'TQQQ', 'TZA', 'GDX', 'GLD', 'NUGT', 'SLV', 'QYLD', 'LHX',
 }
