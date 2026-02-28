@@ -134,8 +134,8 @@ def main():
             # 2. Lower-frequency check for exits
             current_time = time.time()
             if current_time - last_exit_check >= 300:  # 300 seconds = 5 minutes
+                last_exit_check = current_time  # Update before call so a failure doesn't cause retry spam
                 run_exit_logic()
-                last_exit_check = current_time
 
             # 3. Short sleep to keep CPU usage low and scheduler accurate
             time.sleep(1)

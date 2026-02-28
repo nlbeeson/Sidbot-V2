@@ -1,8 +1,9 @@
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file using an absolute path so this
+# works regardless of the working directory the process was launched from.
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 
 # --- DATABASE & API CONFIG ---
 # These pull from your .env for security, with local defaults for development
