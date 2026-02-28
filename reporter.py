@@ -1,22 +1,12 @@
 import os
-import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import resend
 from dotenv import load_dotenv
 from db_utils import get_clients
 import config
+from unified_logger import get_logger
 
-# 1. Initialize logger at the top level
-# Using UTF-8 encoding for Windows compatibility with emojis in log files
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler("sidbot.log", encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 load_dotenv()
 
@@ -54,7 +44,8 @@ def generate_html_report():
         if earn_date_str:
             try:
                 earn_dt = datetime.strptime(earn_date_str, '%Y-%m-%d').date()
-                days_left = (earn_dt - datetime.now().date()).days
+                # Fix #6: compare against UTC date for consistency
+                days_left = (earn_dt - datetime.now(timezone.utc).date()).days
                 earn_disp = f"{days_left}d ({earn_date_str})"
                 if 0 <= days_left <= config.EARNINGS_RESTRICTION_DAYS:
                     earn_disp = f'<span style="color:#e74c3c;font-weight:bold;">⚠️ {earn_disp}</span>'
@@ -110,7 +101,7 @@ def send_report():
         resend.Emails.send({
             "from": f"SidBot Advisor <{config.EMAIL_SENDER}>",
             "to": [config.EMAIL_RECEIVER],
-            "subject": f"SidBot Daily Intelligence - {datetime.now().strftime('%b %d')}",
+            "subject": f"SidBot Daily Intelligence - {datetime.now(timezone.utc).strftime('%b %d')}",
             "html": html_body
         })
         logger.info("Daily intelligence report sent successfully.")

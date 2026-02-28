@@ -1,15 +1,16 @@
 import os
-import logging
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, StopLossRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.data.requests import StockLatestTradeRequest
+import pandas as pd
+from ta.momentum import RSIIndicator
 from db_utils import get_clients
 from risk import calculate_sid_stop_loss, calculate_position_size, calculate_atr_stop
 import config
+from unified_logger import get_logger
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def execute_sid_entries():
@@ -37,6 +38,9 @@ def execute_sid_entries():
 
         open_positions = trading_client.get_all_positions()
         current_pos_count = len(open_positions)
+        # Fix #4: use a set for O(1) lookups; update it locally after each entry
+        # so subsequent iterations in the same run see the new position
+        open_position_symbols = {p.symbol for p in open_positions}
     except Exception as e:
         logger.error(f"Could not fetch account/position data: {e}")
         return
@@ -69,17 +73,39 @@ def execute_sid_entries():
             continue
 
         # 4. Check if already in a position for this symbol
-        if any(p.symbol == symbol for p in open_positions):
+        # Fix #4: check against the locally-maintained set (updated after each entry)
+        # instead of the stale list fetched once at the start of the run
+        if symbol in open_position_symbols:
             continue
 
         # 5. Risk Calculation
-        # 1. Determine Strategy (Defaults to config, but could be dynamic)
         sl_strat = config.STOP_LOSS_STRATEGY
         exit_strat = config.EXIT_STRATEGY
 
+        data_resp = supabase.table("market_data") \
+            .select("*") \
+            .eq("symbol", symbol) \
+            .eq("timeframe", "1d") \
+            .order("timestamp", desc=True) \
+            .limit(30) \
+            .execute()
+
+        # Convert to DataFrame and reverse to chronological order
+        df = pd.DataFrame(data_resp.data).iloc[::-1]
+
+        # RSI room check — re-evaluated at entry time, not just at validation.
+        # A signal marked is_ready=True days ago may have RSI drift too close to 50.
+        curr_rsi = RSIIndicator(close=df['close'], window=config.RSI_PERIOD).rsi().iloc[-1]
+        if direction == 'LONG' and curr_rsi > config.RSI_MOMENTUM_ROOM_LONG:
+            logger.info(f"🚫 Skipping {symbol}: RSI {curr_rsi:.1f} too close to exit target for LONG entry.")
+            continue
+        if direction == 'SHORT' and curr_rsi < config.RSI_MOMENTUM_ROOM_SHORT:
+            logger.info(f"🚫 Skipping {symbol}: RSI {curr_rsi:.1f} too close to exit target for SHORT entry.")
+            continue
+
         # 2. Risk Calculation based on Strategy
         if sl_strat == "ATR_TRAIL":
-            # Ensure you have enough data for ATR (usually 14+ periods)
+            # Now 'df' is defined and can be passed to the function
             stop_loss = calculate_atr_stop(df, direction)
         else:
             stop_loss = calculate_sid_stop_loss(signal['extreme_price'], direction)
@@ -91,8 +117,12 @@ def execute_sid_entries():
             "stop_loss": stop_loss
         }).eq("symbol", symbol).execute()
 
-        stop_loss = calculate_sid_stop_loss(signal['extreme_price'], direction)
-        entry_price = float(signal['entry_price'])
+        # Fetch live price from Alpaca at entry time — one API call per trade entered,
+        # not per symbol scanned, so rate limits are not a concern.
+        latest = clients['alpaca_client'].get_stock_latest_trade(
+            StockLatestTradeRequest(symbol_or_symbols=symbol)
+        )
+        entry_price = float(latest[symbol].price)
         qty = calculate_position_size(equity, config.RISK_PER_TRADE, entry_price, stop_loss)
 
         if qty <= 0:
@@ -112,9 +142,13 @@ def execute_sid_entries():
 
             trading_client.submit_order(order_data=order_data)
 
-            # Update local count and clean up DB
+            # Update local count and symbol set, then clean up DB
             current_pos_count += 1
-            supabase.table("sid_method_signal_watchlist").delete().eq("symbol", symbol).execute()
+            open_position_symbols.add(symbol)  # Fix #4: keep set in sync for this run
+            supabase.table("sid_method_signal_watchlist").update({
+                "is_active": True,
+                "fill_price": entry_price  # Stored for MOMENTUM break-even stop calculation
+            }).eq("symbol", symbol).execute()
 
             logger.info(f"🚀 {side} {qty} {symbol} (Score: {signal['market_score']}). Stop: {stop_loss}")
 

@@ -1,13 +1,11 @@
-import logging
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from ta.momentum import RSIIndicator
 from db_utils import get_clients
 import config
+from unified_logger import get_logger
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def populate_sid_extremes():
@@ -55,6 +53,13 @@ def populate_sid_extremes():
 
             # 5. Upsert to sid_method_signal_watchlist
             if direction:
+                # Skip if there is already an open position for this symbol — avoids
+                # overwriting the live record's metadata (entry_price, extreme_price, etc.)
+                existing = supabase.table("sid_method_signal_watchlist") \
+                    .select("is_active").eq("symbol", symbol).maybe_single().execute()
+                if existing.data and existing.data.get('is_active'):
+                    continue
+
                 # extreme_price is the high/low at the time of the RSI touch
                 extreme_val = df['low'].iloc[-1] if direction == 'LONG' else df['high'].iloc[-1]
 
@@ -62,8 +67,10 @@ def populate_sid_extremes():
                     "symbol": symbol,
                     "direction": direction,
                     "rsi_touch_value": round(float(curr_rsi), 4),
-                    "rsi_touch_date": datetime.now().isoformat(),
-                    "last_updated": datetime.now().isoformat(),
+                    # Fix #6: use UTC-aware datetime so db_utils.cleanup_expired_signals
+                    # comparison against timezone.utc is consistent
+                    "rsi_touch_date": datetime.now(timezone.utc).isoformat(),
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
                     "extreme_price": float(extreme_val),
                     "entry_price": float(curr_price),
                     "is_ready": False,  # Gates/Turn checks are Step 2

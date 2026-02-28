@@ -1,18 +1,25 @@
-import logging
-from supabase import create_client  # Add this specific import
+from supabase import create_client, Client
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockSnapshotRequest
-import config
+from datetime import datetime, timedelta, timezone
 
-# Setup logging for db_utils
-logger = logging.getLogger(__name__)
+import config
+from unified_logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def get_clients():
     """
     Initializes and returns the Supabase and Alpaca clients.
     """
+    url: str = config.SUPABASE_URL
+    # Ensure config.SUPABASE_KEY is the Service Role Key
+    key: str = config.SUPABASE_KEY
+    supabase: Client = create_client(url, key)
+
     return {
-        "supabase_client": create_client(config.SUPABASE_URL, config.SUPABASE_KEY),
+        "supabase_client": supabase,
         "alpaca_client": StockHistoricalDataClient(config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
     }
 
@@ -24,7 +31,8 @@ def sync_latest_market_data():
     """
     clients = get_clients()
     supabase = clients['supabase_client']
-    alpaca_data_client = StockHistoricalDataClient(config.APCA_API_KEY_ID, config.APCA_API_SECRET_KEY)
+    # Fix #11: reuse the client from get_clients() instead of creating a duplicate
+    alpaca_data_client = clients['alpaca_client']
 
     # 1. Get all symbols to update
     tickers_resp = supabase.table("ticker_reference").select("symbol").execute()
@@ -63,30 +71,41 @@ def sync_latest_market_data():
 
 def cleanup_expired_signals():
     """
-    Removes symbols from the watchlist where the time elapsed since
-    rsi_touch_date exceeds the RSI_SIGNAL_PERIOD (28 days).
+    Safety-net cleanup: removes non-active signals older than SIGNAL_EXPIRY_DAYS.
+
+    Primary signal expiry is now RSI-based: validate_staged_signals() in scanner.py
+    deletes a signal the moment RSI crosses the momentum room threshold (>45 for LONG,
+    <55 for SHORT), meaning no room for the trade to reach RSI 50.
+
+    This function is a fallback for signals that slipped through the RSI check
+    (e.g., market data gaps, bot downtime). SIGNAL_EXPIRY_DAYS is intentionally
+    generous (60 days) since most signals will already be gone by RSI-based expiry.
     """
     clients = get_clients()
     supabase = clients['supabase_client']
 
-    # 1. Fetch all symbols and their touch dates
-    staged = supabase.table("sid_method_signal_watchlist").select("symbol, rsi_touch_date").execute()
+    # 1. Fetch non-active records only — skip is_active=True (open positions)
+    staged = supabase.table("sid_method_signal_watchlist").select("symbol, rsi_touch_date").neq("is_active", True).execute()
 
-    if not staged.data:
+    if not staged or not staged.data:
         return
 
-    expiry_threshold = datetime.now() - timedelta(days=config.RSI_SIGNAL_PERIOD)
+    # 2. Use timezone-aware UTC now
+    expiry_threshold = datetime.now(timezone.utc) - timedelta(days=config.SIGNAL_EXPIRY_DAYS)
     removed_count = 0
 
     for record in staged.data:
         symbol = record['symbol']
-        # Parse ISO format date from DB
-        touch_date = datetime.fromisoformat(record['rsi_touch_date'])
 
-        # 2. Check if the signal has expired
+        # 3. Parse the date and force it to be UTC aware (.replace)
+        # to match the expiry_threshold awareness
+        raw_date = record['rsi_touch_date']
+        touch_date = datetime.fromisoformat(raw_date).replace(tzinfo=timezone.utc)
+
+        # 4. Perform the comparison
         if touch_date < expiry_threshold:
             supabase.table("sid_method_signal_watchlist").delete().eq("symbol", symbol).execute()
-            logger.info(f"🧹 Removed expired signal: {symbol} (Touched on {touch_date.date()})")
+            logger.info(f"🧹 Removed expired signal: {symbol}")
             removed_count += 1
 
     if removed_count > 0:

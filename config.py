@@ -1,8 +1,9 @@
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file using an absolute path so this
+# works regardless of the working directory the process was launched from.
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 
 # --- DATABASE & API CONFIG ---
 # These pull from your .env for security, with local defaults for development
@@ -22,8 +23,8 @@ ALLOW_SHORT = True           # Toggle to enable/disable short selling in the str
 
 # --- SID METHOD PARAMETERS ---
 # --- STRATEGY SELECTION ---
-STOP_LOSS_STRATEGY = "ATR_TRAIL"  # Options: "FIXED_WHOLE" or "ATR_TRAIL"
-EXIT_STRATEGY = "FIXED" # Options: "FIXED" (RSI 50 crossover) or "MOMENTUM" (Remains in trade past RSI  until RSI momentum reverses)
+STOP_LOSS_STRATEGY = "FIXED_WHOLE"  # Options: "FIXED_WHOLE" or "ATR_TRAIL"
+EXIT_STRATEGY = "MOMENTUM"          # Options: "FIXED" (exit 100% at RSI 50) or "MOMENTUM" (exit 50% at RSI 50 + break-even stop, remaining 50% on momentum reversal)
 
 # --- ATR SPECIFIC ---
 ATR_PERIOD = 14
@@ -54,3 +55,14 @@ WEIGHT_SECTOR_ALIGNMENT = 1
 
 # --- EXIT STRATEGY ---
 RSI_EXIT_TARGET = 50         # Close position when Daily RSI crosses this
+
+# Early exit: close the full position if RSI reverses 2 consecutive bars before reaching RSI_EXIT_TARGET.
+# Mirrors the mentor's manual "2-day RSI reversal" rule from the backtest.
+# Use False to let all positions run to RSI 50 or stop loss (pure FIXED behavior).
+# Skipped during MOMENTUM Phase 2 (that phase manages its own reversal exit).
+EARLY_EXIT_ON_RSI_REVERSAL = False
+
+# Signal expiry: safety-net time limit before a signal is force-deleted by the daily cleanup.
+# Primary expiry is now RSI-based (scanner deletes when RSI crosses the momentum room threshold).
+# This catches any signals that slipped through the RSI check (e.g., data gaps, bot downtime).
+SIGNAL_EXPIRY_DAYS = 60
